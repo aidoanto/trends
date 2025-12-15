@@ -102,6 +102,7 @@ def fetch_trends_data(keywords: list[str], timeframe: str = "now 1-d"):
 def format_interest_data(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
     """
     Format the interest over time DataFrame for display in Google Sheets.
+    Converts timestamps to Australian Eastern time.
     """
     if df.empty:
         return pd.DataFrame({"Message": ["No data available for this time period"]})
@@ -115,6 +116,10 @@ def format_interest_data(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
     # Drop the 'isPartial' column if present
     if "isPartial" in df.columns:
         df = df.drop(columns=["isPartial"])
+    
+    # Convert to Australian Eastern time
+    # pytrends returns UTC timestamps without timezone info, so localize first
+    df["Timestamp"] = df["Timestamp"].dt.tz_localize("UTC").dt.tz_convert("Australia/Sydney")
     
     # Format timestamp for readability
     df["Timestamp"] = df["Timestamp"].dt.strftime("%Y-%m-%d %H:%M")
