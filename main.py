@@ -217,9 +217,9 @@ def update_related_tab(spreadsheet, tab_name: str, keywords: list[str], related_
     print(f"  Successfully updated {tab_name}")
 
 
-def update_log_tab(spreadsheet, topics_config: dict):
+def update_log_tab(spreadsheet, topics_config: dict, errors: dict = None):
     """
-    Update the log/metadata tab with update history and configuration.
+    Update the log/metadata tab with update history, configuration, and any errors.
     """
     print("Updating log tab...")
     
@@ -232,24 +232,36 @@ def update_log_tab(spreadsheet, topics_config: dict):
     log_data = [
         ["Last Updated", current_time],
         ["", ""],
-        ["Topics Tracked", "Keywords"],
+        ["Topics Tracked", "Keywords", "Status"],
     ]
     
     for topic, config in topics_config.items():
-        log_data.append([topic, ", ".join(config["keywords"])])
+        if errors and topic in errors:
+            status = f"ERROR: {errors[topic]}"
+        else:
+            status = "OK"
+        log_data.append([topic, ", ".join(config["keywords"]), status])
     
     log_data.append(["", ""])
     log_data.append(["Sheets Structure", ""])
     log_data.append(["- Traffic sheets", "Interest over time (last 24 hours)"])
     log_data.append(["- Related sheets", "Top and rising related queries"])
     
+    if errors:
+        log_data.append(["", ""])
+        log_data.append(["Note", "Failed topics retain previous data until next successful update"])
+    
     worksheet.update(range_name="A1", values=log_data)
     print("  Successfully updated Update Log")
 
 
-def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
+def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]) -> str | None:
     """
     Update both traffic and related tabs for a topic.
+    
+    Returns:
+        None if successful, error message string if failed.
+        On failure, previous data in sheets is preserved.
     """
     print(f"Updating tabs for: {base_tab_name}")
     
@@ -258,16 +270,10 @@ def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
     try:
         data = fetch_trends_data(keywords)
     except Exception as e:
-        print(f"  Error fetching trends: {e}")
-        # Write error to traffic tab
-        worksheet = get_or_create_worksheet(spreadsheet, base_tab_name)
-        worksheet.clear()
-        error_df = pd.DataFrame({
-            "Error": [str(e)],
-            "Last Attempt": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
-        })
-        set_with_dataframe(worksheet, error_df, row=1, col=1, include_index=False, include_column_header=True)
-        return
+        error_msg = str(e)
+        print(f"  Error fetching trends: {error_msg}")
+        print(f"  Preserving previous data in sheets")
+        return error_msg
     
     # Update traffic tab (main tab name)
     update_traffic_tab(spreadsheet, base_tab_name, keywords, data["interest_over_time"])
@@ -277,6 +283,7 @@ def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
     update_related_tab(spreadsheet, related_tab_name, keywords, data["related_queries"])
     
     print(f"  Successfully updated both tabs for {base_tab_name}")
+    return None
 
 
 def main():
@@ -299,12 +306,16 @@ def main():
         raise
     
     # Update each topic (creates both traffic and related tabs)
+    errors = {}
     for tab_name, config in TABS_CONFIG.items():
         print(f"\n{'─' * 40}")
         try:
-            update_tabs_for_topic(spreadsheet, tab_name, config["keywords"])
+            error = update_tabs_for_topic(spreadsheet, tab_name, config["keywords"])
+            if error:
+                errors[tab_name] = error
         except Exception as e:
             print(f"Error updating {tab_name}: {e}")
+            errors[tab_name] = str(e)
             # Continue with other topics even if one fails
             continue
         
@@ -314,7 +325,7 @@ def main():
     # Update the log/metadata tab
     print(f"\n{'─' * 40}")
     try:
-        update_log_tab(spreadsheet, TABS_CONFIG)
+        update_log_tab(spreadsheet, TABS_CONFIG, errors)
     except Exception as e:
         print(f"Error updating log tab: {e}")
     
