@@ -177,6 +177,7 @@ def get_or_create_worksheet(spreadsheet, tab_name: str, rows: int = 100):
 def update_traffic_tab(spreadsheet, tab_name: str, keywords: list[str], interest_df: pd.DataFrame):
     """
     Update the traffic/interest over time tab.
+    Headers on row 1, data starting row 2.
     """
     print(f"  Updating traffic tab: {tab_name}")
     
@@ -186,14 +187,8 @@ def update_traffic_tab(spreadsheet, tab_name: str, keywords: list[str], interest
     # Format data
     formatted_df = format_interest_data(interest_df, keywords)
     
-    # Write header with timestamp
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update(range_name="A1", values=[[f"Last Updated: {current_time}"]])
-    worksheet.update(range_name="A2", values=[[f"Keywords: {', '.join(keywords)}"]])
-    
-    # Write interest over time data
-    worksheet.update(range_name="A4", values=[["INTEREST OVER TIME (Last 24 Hours)"]])
-    set_with_dataframe(worksheet, formatted_df, row=5, col=1)
+    # Write data with headers on row 1
+    set_with_dataframe(worksheet, formatted_df, row=1, col=1, include_index=False, include_column_header=True)
     
     print(f"  Successfully updated {tab_name}")
 
@@ -201,6 +196,7 @@ def update_traffic_tab(spreadsheet, tab_name: str, keywords: list[str], interest
 def update_related_tab(spreadsheet, tab_name: str, keywords: list[str], related_queries: dict):
     """
     Update the related queries tab.
+    Headers on row 1, data starting row 2.
     """
     print(f"  Updating related tab: {tab_name}")
     
@@ -210,16 +206,40 @@ def update_related_tab(spreadsheet, tab_name: str, keywords: list[str], related_
     # Format data
     related_df = format_related_queries(related_queries, keywords)
     
-    # Write header with timestamp
-    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    worksheet.update(range_name="A1", values=[[f"Last Updated: {current_time}"]])
-    worksheet.update(range_name="A2", values=[[f"Keywords: {', '.join(keywords)}"]])
-    
-    # Write related queries data
-    worksheet.update(range_name="A4", values=[["RELATED QUERIES"]])
-    set_with_dataframe(worksheet, related_df, row=5, col=1)
+    # Write data with headers on row 1
+    set_with_dataframe(worksheet, related_df, row=1, col=1, include_index=False, include_column_header=True)
     
     print(f"  Successfully updated {tab_name}")
+
+
+def update_log_tab(spreadsheet, topics_config: dict):
+    """
+    Update the log/metadata tab with update history and configuration.
+    """
+    print("Updating log tab...")
+    
+    worksheet = get_or_create_worksheet(spreadsheet, "Update Log", rows=50)
+    worksheet.clear()
+    
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Build log data
+    log_data = [
+        ["Last Updated", current_time],
+        ["", ""],
+        ["Topics Tracked", "Keywords"],
+    ]
+    
+    for topic, config in topics_config.items():
+        log_data.append([topic, ", ".join(config["keywords"])])
+    
+    log_data.append(["", ""])
+    log_data.append(["Sheets Structure", ""])
+    log_data.append(["- Traffic sheets", "Interest over time (last 24 hours)"])
+    log_data.append(["- Related sheets", "Top and rising related queries"])
+    
+    worksheet.update(range_name="A1", values=log_data)
+    print("  Successfully updated Update Log")
 
 
 def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
@@ -237,8 +257,11 @@ def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
         # Write error to traffic tab
         worksheet = get_or_create_worksheet(spreadsheet, base_tab_name)
         worksheet.clear()
-        worksheet.update(range_name="A1", values=[[f"Error fetching data: {e}"]])
-        worksheet.update(range_name="A2", values=[[f"Last attempt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+        error_df = pd.DataFrame({
+            "Error": [str(e)],
+            "Last Attempt": [datetime.now().strftime("%Y-%m-%d %H:%M:%S")]
+        })
+        set_with_dataframe(worksheet, error_df, row=1, col=1, include_index=False, include_column_header=True)
         return
     
     # Update traffic tab (main tab name)
@@ -282,6 +305,13 @@ def main():
         
         # Small delay between topics to avoid rate limiting
         sleep(2)
+    
+    # Update the log/metadata tab
+    print(f"\n{'─' * 40}")
+    try:
+        update_log_tab(spreadsheet, TABS_CONFIG)
+    except Exception as e:
+        print(f"Error updating log tab: {e}")
     
     print(f"\n{'=' * 50}")
     print("Update complete!")
