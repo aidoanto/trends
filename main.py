@@ -159,39 +159,32 @@ def format_related_queries(related_queries: dict, keywords: list[str]) -> pd.Dat
     return pd.DataFrame(rows)
 
 
-def update_sheet_tab(spreadsheet, tab_name: str, keywords: list[str]):
+def get_or_create_worksheet(spreadsheet, tab_name: str, rows: int = 100):
     """
-    Update a single tab in the Google Sheet with trends data.
+    Get an existing worksheet or create a new one.
     """
-    print(f"Updating tab: {tab_name}")
-    
-    # Get or create the worksheet
     try:
         worksheet = spreadsheet.worksheet(tab_name)
         # Ensure worksheet has enough rows
-        if worksheet.row_count < 500:
-            worksheet.resize(rows=500, cols=20)
+        if worksheet.row_count < rows:
+            worksheet.resize(rows=rows, cols=20)
     except gspread.WorksheetNotFound:
         print(f"  Creating new worksheet: {tab_name}")
-        worksheet = spreadsheet.add_worksheet(title=tab_name, rows=500, cols=20)
+        worksheet = spreadsheet.add_worksheet(title=tab_name, rows=rows, cols=20)
+    return worksheet
+
+
+def update_traffic_tab(spreadsheet, tab_name: str, keywords: list[str], interest_df: pd.DataFrame):
+    """
+    Update the traffic/interest over time tab.
+    """
+    print(f"  Updating traffic tab: {tab_name}")
     
-    # Clear existing content
+    worksheet = get_or_create_worksheet(spreadsheet, tab_name, rows=100)
     worksheet.clear()
     
-    # Fetch trends data
-    print(f"  Fetching trends for: {keywords}")
-    try:
-        data = fetch_trends_data(keywords)
-    except Exception as e:
-        print(f"  Error fetching trends: {e}")
-        # Write error message to sheet
-        worksheet.update(range_name="A1", values=[[f"Error fetching data: {e}"]])
-        worksheet.update(range_name="A2", values=[[f"Last attempt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
-        return
-    
     # Format data
-    interest_df = format_interest_data(data["interest_over_time"], keywords)
-    related_df = format_related_queries(data["related_queries"], keywords)
+    formatted_df = format_interest_data(interest_df, keywords)
     
     # Write header with timestamp
     current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -200,16 +193,62 @@ def update_sheet_tab(spreadsheet, tab_name: str, keywords: list[str]):
     
     # Write interest over time data
     worksheet.update(range_name="A4", values=[["INTEREST OVER TIME (Last 24 Hours)"]])
-    set_with_dataframe(worksheet, interest_df, row=5, col=1)
-    
-    # Calculate where to put related queries (below interest data)
-    related_start_row = 5 + len(interest_df) + 3
-    
-    # Write related queries data
-    worksheet.update(range_name=f"A{related_start_row}", values=[["RELATED QUERIES"]])
-    set_with_dataframe(worksheet, related_df, row=related_start_row + 1, col=1)
+    set_with_dataframe(worksheet, formatted_df, row=5, col=1)
     
     print(f"  Successfully updated {tab_name}")
+
+
+def update_related_tab(spreadsheet, tab_name: str, keywords: list[str], related_queries: dict):
+    """
+    Update the related queries tab.
+    """
+    print(f"  Updating related tab: {tab_name}")
+    
+    worksheet = get_or_create_worksheet(spreadsheet, tab_name, rows=200)
+    worksheet.clear()
+    
+    # Format data
+    related_df = format_related_queries(related_queries, keywords)
+    
+    # Write header with timestamp
+    current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    worksheet.update(range_name="A1", values=[[f"Last Updated: {current_time}"]])
+    worksheet.update(range_name="A2", values=[[f"Keywords: {', '.join(keywords)}"]])
+    
+    # Write related queries data
+    worksheet.update(range_name="A4", values=[["RELATED QUERIES"]])
+    set_with_dataframe(worksheet, related_df, row=5, col=1)
+    
+    print(f"  Successfully updated {tab_name}")
+
+
+def update_tabs_for_topic(spreadsheet, base_tab_name: str, keywords: list[str]):
+    """
+    Update both traffic and related tabs for a topic.
+    """
+    print(f"Updating tabs for: {base_tab_name}")
+    
+    # Fetch trends data once for both tabs
+    print(f"  Fetching trends for: {keywords}")
+    try:
+        data = fetch_trends_data(keywords)
+    except Exception as e:
+        print(f"  Error fetching trends: {e}")
+        # Write error to traffic tab
+        worksheet = get_or_create_worksheet(spreadsheet, base_tab_name)
+        worksheet.clear()
+        worksheet.update(range_name="A1", values=[[f"Error fetching data: {e}"]])
+        worksheet.update(range_name="A2", values=[[f"Last attempt: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"]])
+        return
+    
+    # Update traffic tab (main tab name)
+    update_traffic_tab(spreadsheet, base_tab_name, keywords, data["interest_over_time"])
+    
+    # Update related queries tab (with " - Related" suffix)
+    related_tab_name = f"{base_tab_name} - Related"
+    update_related_tab(spreadsheet, related_tab_name, keywords, data["related_queries"])
+    
+    print(f"  Successfully updated both tabs for {base_tab_name}")
 
 
 def main():
@@ -231,17 +270,17 @@ def main():
         print(f"Failed to connect to Google Sheets: {e}")
         raise
     
-    # Update each tab
+    # Update each topic (creates both traffic and related tabs)
     for tab_name, config in TABS_CONFIG.items():
         print(f"\n{'─' * 40}")
         try:
-            update_sheet_tab(spreadsheet, tab_name, config["keywords"])
+            update_tabs_for_topic(spreadsheet, tab_name, config["keywords"])
         except Exception as e:
             print(f"Error updating {tab_name}: {e}")
-            # Continue with other tabs even if one fails
+            # Continue with other topics even if one fails
             continue
         
-        # Small delay between tabs to avoid rate limiting
+        # Small delay between topics to avoid rate limiting
         sleep(2)
     
     print(f"\n{'=' * 50}")
