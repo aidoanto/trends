@@ -10,7 +10,7 @@ Writes data to a Google Sheet for stakeholder monitoring.
 
 import json
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from time import sleep
 
 import gspread
@@ -18,12 +18,16 @@ import pandas as pd
 from dotenv import load_dotenv
 from gspread_dataframe import set_with_dataframe
 from pytrends.request import TrendReq
+from zoneinfo import ZoneInfo
 
 # Load environment variables from .env file (for local development)
 load_dotenv()
 
 # Google Sheet configuration
 SPREADSHEET_ID = "1aSC_o7FqYVTB9B96RJQGphhwzDGJfIbPAgTR5kXwKbo"
+
+# Incident start time: 3pm AEDT on Sunday 14th December 2025
+INCIDENT_START = datetime(2025, 12, 14, 15, 0, tzinfo=ZoneInfo("Australia/Sydney"))
 
 # Keyword configurations for each tab
 TABS_CONFIG = {
@@ -65,13 +69,31 @@ def get_google_sheets_client():
     return client
 
 
-def fetch_trends_data(keywords: list[str], timeframe: str = "now 1-d"):
+def get_timeframe():
+    """
+    Calculate the timeframe string for pytrends.
+    Goes from incident start (3pm Dec 14) to now.
+    
+    Format: 'YYYY-MM-DDTHH YYYY-MM-DDTHH' for hourly granularity
+    pytrends uses UTC internally.
+    """
+    # Convert incident start to UTC for pytrends
+    start_utc = INCIDENT_START.astimezone(timezone.utc)
+    end_utc = datetime.now(timezone.utc)
+    
+    # Format for pytrends (hourly granularity)
+    start_str = start_utc.strftime("%Y-%m-%dT%H")
+    end_str = end_utc.strftime("%Y-%m-%dT%H")
+    
+    return f"{start_str} {end_str}"
+
+
+def fetch_trends_data(keywords: list[str]):
     """
     Fetch Google Trends data for the given keywords.
     
     Args:
         keywords: List of keywords to search for
-        timeframe: Time range for the data (default: last 24 hours)
         
     Returns:
         Dictionary containing:
@@ -80,6 +102,10 @@ def fetch_trends_data(keywords: list[str], timeframe: str = "now 1-d"):
     """
     # Initialize pytrends
     pytrends = TrendReq(hl="en-AU", tz=600)  # Australian English, AEST timezone
+    
+    # Calculate timeframe from incident start to now
+    timeframe = get_timeframe()
+    print(f"  Timeframe: {timeframe}")
     
     # Build payload with keywords
     pytrends.build_payload(keywords, cat=0, timeframe=timeframe, geo="AU")
@@ -123,6 +149,16 @@ def format_interest_data(df: pd.DataFrame, keywords: list[str]) -> pd.DataFrame:
     
     # Format timestamp for readability
     df["Timestamp"] = df["Timestamp"].dt.strftime("%Y-%m-%d %H:%M")
+    
+    # Ensure all data columns (non-Timestamp) are numeric
+    # Sometimes pytrends returns datetime objects instead of numbers
+    for col in df.columns:
+        if col != "Timestamp":
+            # First, convert any datetime objects to NaN
+            if df[col].dtype == 'object' or pd.api.types.is_datetime64_any_dtype(df[col]):
+                df[col] = df[col].apply(lambda x: None if isinstance(x, (pd.Timestamp, datetime)) else x)
+            # Then convert to numeric, coercing errors to NaN, then fill with 0
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(int)
     
     return df
 
